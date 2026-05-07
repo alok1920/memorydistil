@@ -1,6 +1,6 @@
 'use strict'
 
-const DEFAULT_MODEL = 'llama3-8b-8192'
+const DEFAULT_MODEL = 'llama-3.1-8b-instant'
 
 /**
  * Call Groq API to compress messages
