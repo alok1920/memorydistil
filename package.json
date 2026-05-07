@@ -1,0 +1,36 @@
+{
+  "name": "memorydistil",
+  "version": "0.1.0",
+  "description": "Compress AI conversation history into structured facts optimised for prompt re-injection. Provider-agnostic, zero infrastructure, drop-in replacement for truncation.",
+  "main": "src/index.js",
+  "bin": {
+    "memorydistil": "./bin/cli.js"
+  },
+  "scripts": {
+    "test": "node test/index.test.js"
+  },
+  "keywords": [
+    "ai",
+    "conversation",
+    "memory",
+    "compression",
+    "llm",
+    "tokens",
+    "context",
+    "chatbot",
+    "prompt"
+  ],
+  "author": "Alok Nagargoje",
+  "license": "MIT",
+  "dependencies": {
+    "tiktoken": "^1.0.15"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alok1920/memorydistil"
+  },
+  "homepage": "https://github.com/alok1920/memorydistil#readme"
+}
