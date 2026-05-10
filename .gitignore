@@ -1,0 +1,8 @@
+node_modules/
+.env
+.env.local
+*.log
+.DS_Store
+COMMIT_GUIDE_V02.md
+TESTING_V02.md
+test-live.js
