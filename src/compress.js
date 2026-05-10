@@ -2,7 +2,7 @@
 
 const { getProvider, getChunkSize } = require('../memorydistil/src/providers/index')
 const { getCompressionPrompt, parseResponse, toPromptBlock } = require('../memorydistil/src/formatters/index')
-const { buildEnhancementPrompt, parseStructuredResponse, DEFAULT_CATEGORIES } = require('../memorydistil/src/formatters/structured')
+const { buildEnhancementPrompt, parseStructuredResponse, DEFAULT_CATEGORIES } = require('./formatters/structured')
 const { mergeSummaries } = require('./merge')
 
 /**

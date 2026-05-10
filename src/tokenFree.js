@@ -1,6 +1,6 @@
 'use strict'
 
-const { factsToPromptBlock } = require('../memorydistil/src/formatters/structured')
+const { factsToPromptBlock } = require('./formatters/structured')
 
 const DECISION_KEYWORDS = [
   'decided', 'will use', 'the plan', 'completed', 'going to',
