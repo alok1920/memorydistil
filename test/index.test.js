@@ -270,6 +270,55 @@ test('token-free returns empty summary on empty input', () => {
   assertEqual(result.summary.decisions.length, 0)
 })
 
+test('assistant questions never classified as decisions or completed', () => {
+  const msgs = [
+    {role:'user',      content:'We decided to use SQLite'},
+    {role:'assistant', content:'How does failover work?'},
+    {role:'assistant', content:'Does this work correctly?'},
+    {role:'user',      content:'Yes failover works automatically'}
+  ]
+  const result = tokenFreeCompress(msgs)
+
+  const completedHasAssistant = result.summary.completed.some(c =>
+    c.toLowerCase().includes('how does failover work') ||
+    c.toLowerCase().includes('does this work correctly')
+  )
+  assert(!completedHasAssistant, 'assistant questions must not appear in completed')
+
+  const decisionsHasAssistant = result.summary.decisions.some(d =>
+    d.toLowerCase().includes('how does failover work') ||
+    d.toLowerCase().includes('does this work correctly')
+  )
+  assert(!decisionsHasAssistant, 'assistant questions must not appear in decisions')
+
+  const inOpenQ = result.summary.openQuestions.some(q =>
+    q.toLowerCase().includes('how does failover work')
+  )
+  assert(inOpenQ, 'assistant question "How does failover work" should land in openQuestions')
+})
+
+test('paths with internal dots are not split into fragments', () => {
+  const msgs = [
+    {role:'user', content:'All data lives in ~/.ai-router/ folder'},
+    {role:'user', content:'Config at ~/.ai-router/config.json'}
+  ]
+  const result = tokenFreeCompress(msgs)
+
+  const allFacts = [
+    ...result.summary.decisions,
+    ...result.summary.completed,
+    ...result.summary.inProgress,
+    ...result.summary.preferences,
+    ...result.summary.openQuestions
+  ]
+
+  const brokenFragment = allFacts.find(f => f.endsWith('ai-router/'))
+  assert(!brokenFragment, 'no fragment should end with broken path "ai-router/", got: ' + brokenFragment)
+
+  const intactPath = allFacts.some(f => f.includes('~/.ai-router/'))
+  assert(intactPath, 'full path "~/.ai-router/" should appear intact in some field')
+})
+
 // ─── results ──────────────────────────────────────────────────────────────────
 
 console.log(`\n${passed + failed} tests: ${passed} passed, ${failed} failed\n`)

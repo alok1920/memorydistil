@@ -100,21 +100,23 @@ function tokenFreeCompress(messages) {
   const preferences = new Set()
   const openQuestions = new Set()
 
-  // Scan EVERY message — both user and assistant — assistant messages contain
-  // confirmations and summaries that are valuable signals.
   for (const msg of messages) {
     const content = (msg.content || '').trim()
     if (!content) continue
 
     const role = msg.role || 'user'
 
-    // Split on sentence boundaries; also accept the full message as one line
-    // when there are no terminators (chat messages often skip punctuation).
-    const rawLines = content.split(/[.\n!]+/).map(l => l.trim()).filter(l => l.length >= MIN_LINE_LEN)
+    // Path-aware sentence splitter: protect dots that sit inside paths,
+    // filenames, dotfiles, or version numbers (e.g. ~/.ai-router/config.json,
+    // .env, 1.5) so they do not get treated as sentence terminators.
+    const protectedContent = content.replace(/\.(?=[a-zA-Z0-9_-])/g, '___DOT___')
+    const rawLines = protectedContent
+      .split(/[.\n!]+/)
+      .map(l => l.replace(/___DOT___/g, '.').trim())
+      .filter(l => l.length >= MIN_LINE_LEN)
     const lines = rawLines.length > 0 ? rawLines : [content]
 
     for (const line of lines) {
-      // Loosened length filter — only skip pathologically long monologues.
       if (line.length > MAX_LINE_LEN) continue
 
       const hasCompleted = containsAny(line, COMPLETED_KEYWORDS)
@@ -127,7 +129,18 @@ function tokenFreeCompress(messages) {
 
       const trimmed = line.slice(0, 140)
 
-      // Order matters — most-specific first.
+      // Assistant messages can only contribute to openQuestions. They ask
+      // things; they don't decide, complete, or commit to in-progress work.
+      // Without this gate, an assistant question like "How does it work?"
+      // gets misclassified as completed via the "works" keyword.
+      if (role === 'assistant') {
+        if (hasOpenQ || (hasQuestionMark && hasQuestionWord)) {
+          openQuestions.add(trimmed)
+        }
+        continue
+      }
+
+      // User messages — full classification, most-specific first.
       if (hasOpenQ) {
         openQuestions.add(trimmed)
         continue
@@ -148,9 +161,7 @@ function tokenFreeCompress(messages) {
         continue
       }
 
-      // Open questions only from user-side messages with a "?" — assistant
-      // questions are usually prompts, not unresolved items.
-      if (hasQuestionMark && hasQuestionWord && role === 'user') {
+      if (hasQuestionMark && hasQuestionWord) {
         openQuestions.add(trimmed)
         continue
       }
