@@ -9,63 +9,67 @@ const DEFAULT_CATEGORIES = [
   'openQuestions'
 ]
 
-/**
- * Builds the system prompt that tells the AI how to compress the conversation
- * into structured facts
- *
- * @param {string[]} categories
- * @returns {string}
- */
-function buildCompressionPrompt(categories) {
-  const categoryList = categories.join(', ')
+function buildCompressionPrompt() {
+  return `You are a conversation memory compressor. Read the conversation and extract key facts.
 
-  return `You are a conversation memory compressor. Your job is to read a conversation and extract the key facts into a structured JSON object.
+Return a JSON object with these fields:
 
-Extract facts into these categories: ${categoryList}
-
-Rules:
-- Be specific and factual, not vague
-- Use short bullet points, not paragraphs  
-- Capture decisions, preferences, completed work, and open questions
-- If a category has nothing relevant, use an empty array []
-- Output ONLY valid JSON, nothing else, no markdown, no explanation
-
-Output format:
 {
-  "project": "one line description of what is being built",
-  "decisions": ["decision 1", "decision 2"],
-  "completed": ["thing 1", "thing 2"],
-  "inProgress": ["thing 1"],
-  "preferences": ["preference 1"],
-  "openQuestions": ["question 1"]
-}`
+  "project": "One sentence describing what is being built or discussed",
+  "decisions": ["List what was decided, chosen, or agreed upon"],
+  "completed": ["List what was built, finished, fixed, or shipped"],
+  "inProgress": ["List what is currently being worked on or planned next"],
+  "preferences": ["List any style preferences, constraints, or strong opinions"],
+  "openQuestions": ["List any unresolved questions or things not yet decided"]
 }
 
-/**
- * Converts structured facts object into a clean prompt block string
- * ready to paste directly into any AI tool
- *
- * @param {Object} facts - structured facts object
- * @returns {string}
- */
+Rules:
+- Use plain natural language, not jargon
+- Be specific: "use SQLite via node:sqlite" not "use a database"
+- If nothing fits a category, use an empty array []
+- Output ONLY valid JSON, no markdown, no explanation, no preamble`
+}
+
+function buildEnhancementPrompt() {
+  return `You are a conversation memory compressor. You will receive a rough draft summary and additional raw messages.
+
+Your job:
+1. Improve the draft - fix vague or incomplete items
+2. Add anything important from the raw messages the draft missed
+3. Remove duplicates
+
+Return this JSON structure:
+
+{
+  "project": "One sentence describing what is being built or discussed",
+  "decisions": ["what was decided or chosen"],
+  "completed": ["what was built or finished"],
+  "inProgress": ["what is currently being worked on"],
+  "preferences": ["style preferences or constraints"],
+  "openQuestions": ["unresolved questions"]
+}
+
+Output ONLY valid JSON, no markdown, no explanation.`
+}
+
 function factsToPromptBlock(facts) {
   const lines = ['=== CONVERSATION CONTEXT ===']
 
   if (facts.project) {
-    lines.push(`Project: ${facts.project}`)
+    lines.push('Project: ' + facts.project)
   }
 
   const arrayFields = {
-    decisions: 'Decisions made',
-    completed: 'Completed',
-    inProgress: 'In progress',
-    preferences: 'Preferences',
+    decisions:     'Decisions made',
+    completed:     'Completed',
+    inProgress:    'In progress',
+    preferences:   'Preferences',
     openQuestions: 'Open questions'
   }
 
   for (const [key, label] of Object.entries(arrayFields)) {
     if (facts[key] && facts[key].length > 0) {
-      lines.push(`${label}: ${facts[key].join(' | ')}`)
+      lines.push(label + ': ' + facts[key].join(' | '))
     }
   }
 
@@ -73,31 +77,29 @@ function factsToPromptBlock(facts) {
   return lines.join('\n')
 }
 
-/**
- * Parse the raw AI response into a structured facts object
- * Handles cases where the AI wraps output in markdown fences
- *
- * @param {string} rawResponse
- * @param {string[]} categories
- * @returns {Object}
- */
 function parseStructuredResponse(rawResponse, categories) {
   let cleaned = rawResponse.trim()
 
-  // strip markdown code fences if present
   cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '')
+
+  const jsonStart = cleaned.indexOf('{')
+  const jsonEnd = cleaned.lastIndexOf('}')
+  if (jsonStart !== -1 && jsonEnd !== -1 && jsonStart < jsonEnd) {
+    cleaned = cleaned.slice(jsonStart, jsonEnd + 1)
+  }
 
   try {
     const parsed = JSON.parse(cleaned)
-
-    // ensure all requested categories exist
     const result = {}
     for (const cat of categories) {
-      result[cat] = parsed[cat] ?? (cat === 'project' ? '' : [])
+      if (cat === 'project') {
+        result[cat] = typeof parsed[cat] === 'string' ? parsed[cat] : ''
+      } else {
+        result[cat] = Array.isArray(parsed[cat]) ? parsed[cat] : []
+      }
     }
     return result
   } catch {
-    // if parsing fails return a fallback with the raw text
     return {
       project: 'Context from previous conversation',
       decisions: [],
@@ -113,6 +115,7 @@ function parseStructuredResponse(rawResponse, categories) {
 module.exports = {
   DEFAULT_CATEGORIES,
   buildCompressionPrompt,
+  buildEnhancementPrompt,
   factsToPromptBlock,
   parseStructuredResponse
 }
