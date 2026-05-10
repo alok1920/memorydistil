@@ -3,16 +3,30 @@
 const { factsToPromptBlock } = require('./formatters/structured')
 
 const DECISION_KEYWORDS = [
-  'decided', 'will use', 'the plan', 'completed', 'going to',
+  'decided', 'will use', 'the plan', 'going to',
   'we should', 'i want', "let's use", 'use ', 'using ', 'switch to',
-  'changed to', 'fixed', 'done', 'finished', 'built', 'added',
-  'removed', 'updated', 'refactored', 'installed', 'configured'
+  'changed to', 'refactored', 'installed', 'configured',
+  'chose', 'selected', 'picked', 'going with', 'decided on',
+  'we will', 'we are using', 'eight', 'three', 'all data', 'never in'
 ]
 
 const INPROGRESS_KEYWORDS = [
-  'working on', 'in progress', 'next step', 'need to', 'still need',
-  'todo', 'to do', 'pending', 'not yet', 'will do', 'planning to',
-  'about to', 'currently', 'refactor', 'now let'
+  'working on', 'in progress', 'need to', 'still need',
+  'todo', 'to do', 'not yet', 'will do', 'planning to',
+  'about to', 'currently', 'refactor', 'now let',
+  'integrating', 'next step', 'after this', 'about to start'
+]
+
+const COMPLETED_KEYWORDS = [
+  'completed', 'finished', 'built', 'fixed', 'added',
+  'removed', 'updated', 'done', 'is done', 'are done',
+  'shipped', 'published', 'works', 'working',
+  'no code changes', 'no compilation'
+]
+
+const OPENQUESTION_KEYWORDS = [
+  'still pending', 'fix is still', 'pending', 'unresolved',
+  'not sure', "haven't decided", 'tbd', 'open question'
 ]
 
 const QUESTION_KEYWORDS = [
@@ -20,40 +34,40 @@ const QUESTION_KEYWORDS = [
   'can we', 'do we', 'is there', 'is it', 'are there', '?'
 ]
 
-/**
- * Check if a string contains any of the given keywords (case insensitive)
- *
- * @param {string} text
- * @param {string[]} keywords
- * @returns {boolean}
- */
+const PREFERENCE_KEYWORDS = [
+  'prefer', 'always', 'never', 'no inline',
+  'clean', 'simple', 'i like', 'i hate',
+  'make sure', 'important'
+]
+
+// loosened max line length — some real sentences run past 80 chars
+const MAX_LINE_LEN = 160
+const MIN_LINE_LEN = 6
+
 function containsAny(text, keywords) {
   const lower = text.toLowerCase()
   return keywords.some(kw => lower.includes(kw))
 }
 
 /**
- * Extract the project description from the first few messages
- *
- * @param {Array} messages
- * @returns {string}
+ * Extract the project description by scanning user messages for build/create/etc.
+ * Falls back to the first user message.
  */
 function extractProject(messages) {
-  const firstFew = messages.slice(0, 6)
-  for (const msg of firstFew) {
-    const content = msg.content || ''
-    if (content.length > 20 && content.length < 200) {
+  const userMsgs = messages.filter(m => (m.role || 'user') === 'user')
+  for (const msg of userMsgs.slice(0, 8)) {
+    const content = (msg.content || '').trim()
+    if (content.length > 15 && content.length < 240) {
       const lower = content.toLowerCase()
       if (lower.includes('build') || lower.includes('create') || lower.includes('want to') ||
           lower.includes('making') || lower.includes('project') || lower.includes('app') ||
-          lower.includes('tool') || lower.includes('system')) {
-        return content.slice(0, 120).replace(/\n/g, ' ').trim()
+          lower.includes('tool') || lower.includes('cli') || lower.includes('system')) {
+        return content.slice(0, 140).replace(/\n/g, ' ').trim()
       }
     }
   }
-  // fallback — use first user message
-  const firstUser = messages.find(m => m.role === 'user')
-  return firstUser ? firstUser.content.slice(0, 120).replace(/\n/g, ' ').trim() : 'Not identified'
+  const firstUser = userMsgs[0]
+  return firstUser ? firstUser.content.slice(0, 140).replace(/\n/g, ' ').trim() : 'Not identified'
 }
 
 /**
@@ -86,71 +100,91 @@ function tokenFreeCompress(messages) {
   const preferences = new Set()
   const openQuestions = new Set()
 
-  // track last message per role for recency heuristic
-  const lastByRole = {}
-
+  // Scan EVERY message — both user and assistant — assistant messages contain
+  // confirmations and summaries that are valuable signals.
   for (const msg of messages) {
     const content = (msg.content || '').trim()
-    const role = msg.role || 'user'
-
     if (!content) continue
 
-    lastByRole[role] = content
+    const role = msg.role || 'user'
 
-    const lines = content.split(/[.\n!]+/).map(l => l.trim()).filter(l => l.length > 5)
+    // Split on sentence boundaries; also accept the full message as one line
+    // when there are no terminators (chat messages often skip punctuation).
+    const rawLines = content.split(/[.\n!]+/).map(l => l.trim()).filter(l => l.length >= MIN_LINE_LEN)
+    const lines = rawLines.length > 0 ? rawLines : [content]
 
     for (const line of lines) {
-      const isShort = line.length < 80
+      // Loosened length filter — only skip pathologically long monologues.
+      if (line.length > MAX_LINE_LEN) continue
+
+      const hasCompleted = containsAny(line, COMPLETED_KEYWORDS)
       const hasDecision = containsAny(line, DECISION_KEYWORDS)
       const hasProgress = containsAny(line, INPROGRESS_KEYWORDS)
-      const hasQuestion = containsAny(line, QUESTION_KEYWORDS)
+      const hasOpenQ = containsAny(line, OPENQUESTION_KEYWORDS)
+      const hasQuestionMark = line.includes('?')
+      const hasQuestionWord = containsAny(line, QUESTION_KEYWORDS)
+      const hasPreference = containsAny(line, PREFERENCE_KEYWORDS)
 
-      // extract decisions and completed items
-      if (hasDecision && isShort) {
-        const lower = line.toLowerCase()
-        if (lower.includes('completed') || lower.includes('finished') ||
-            lower.includes('done') || lower.includes('built') ||
-            lower.includes('fixed') || lower.includes('added')) {
-          completed.add(line.slice(0, 100))
-        } else {
-          decisions.add(line.slice(0, 100))
-        }
+      const trimmed = line.slice(0, 140)
+
+      // Order matters — most-specific first.
+      if (hasOpenQ) {
+        openQuestions.add(trimmed)
+        continue
       }
 
-      // extract in-progress items
-      if (hasProgress && isShort && !hasDecision) {
-        inProgress.add(line.slice(0, 100))
+      if (hasCompleted) {
+        completed.add(trimmed)
+        continue
       }
 
-      // extract open questions — only from user messages
-      if (hasQuestion && isShort && msg.role === 'user' && line.includes('?')) {
-        openQuestions.add(line.slice(0, 100))
+      if (hasDecision) {
+        decisions.add(trimmed)
+        continue
       }
 
-      // extract preferences — short, opinionated statements
-      if (isShort && !hasQuestion && !hasDecision && !hasProgress) {
-        const lower = line.toLowerCase()
-        if (lower.includes('prefer') || lower.includes('always') ||
-            lower.includes('never') || lower.includes('no inline') ||
-            lower.includes('clean') || lower.includes('simple') ||
-            lower.includes('i like') || lower.includes('i hate') ||
-            lower.includes('make sure') || lower.includes('important')) {
-          preferences.add(line.slice(0, 100))
-        }
+      if (hasProgress) {
+        inProgress.add(trimmed)
+        continue
+      }
+
+      // Open questions only from user-side messages with a "?" — assistant
+      // questions are usually prompts, not unresolved items.
+      if (hasQuestionMark && hasQuestionWord && role === 'user') {
+        openQuestions.add(trimmed)
+        continue
+      }
+
+      if (hasPreference) {
+        preferences.add(trimmed)
       }
     }
   }
 
-  // cap each category to avoid bloat
   const cap = (set, limit) => Array.from(set).slice(0, limit)
 
-  const summary = {
+  let summary = {
     project: extractProject(messages),
     decisions: cap(decisions, 8),
     completed: cap(completed, 8),
-    inProgress: cap(inProgress, 5),
+    inProgress: cap(inProgress, 6),
     preferences: cap(preferences, 5),
-    openQuestions: cap(openQuestions, 5)
+    openQuestions: cap(openQuestions, 6)
+  }
+
+  // Minimum extraction guarantee — if heuristics found almost nothing on a
+  // long-ish conversation, fall back to the first sentence of every user
+  // message. Better to over-include than to ship an empty context block.
+  const factCount = summary.decisions.length + summary.completed.length +
+    summary.inProgress.length + summary.openQuestions.length
+
+  if (factCount < 3 && messages.length > 10) {
+    const userMsgs = messages.filter(m => (m.role || 'user') === 'user')
+    const fallback = userMsgs
+      .map(m => (m.content || '').split(/[.\n!?]+/)[0].trim())
+      .filter(s => s.length >= MIN_LINE_LEN && s.length <= MAX_LINE_LEN)
+      .slice(0, 8)
+    summary.inProgress = Array.from(new Set([...summary.inProgress, ...fallback])).slice(0, 8)
   }
 
   const promptBlock = factsToPromptBlock(summary)

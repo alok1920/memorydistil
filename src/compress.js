@@ -1,7 +1,7 @@
 'use strict'
 
-const { getProvider, getChunkSize } = require('../memorydistil/src/providers/index')
-const { getCompressionPrompt, parseResponse, toPromptBlock } = require('../memorydistil/src/formatters/index')
+const { getProvider, getChunkSize } = require('./providers/index')
+const { getCompressionPrompt, parseResponse, toPromptBlock } = require('./formatters/index')
 const { buildEnhancementPrompt, parseStructuredResponse, DEFAULT_CATEGORIES } = require('./formatters/structured')
 const { mergeSummaries } = require('./merge')
 
@@ -101,7 +101,7 @@ async function compress({ messages, provider, apiKey, model, style = 'structured
 
     totalTokensUsed += tokensUsed
     const summary = parseStructuredResponse(text, categories)
-    const { toPromptBlock: fmt } = require('../memorydistil/src/formatters/index')
+    const { toPromptBlock: fmt } = require('./formatters/index')
     const promptBlock = fmt(summary, style)
 
     return { summary, promptBlock, tokensUsed: totalTokensUsed }

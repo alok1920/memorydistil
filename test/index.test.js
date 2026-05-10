@@ -6,6 +6,7 @@ const { splitWindow } = require('../src/window')
 const { estimateTokens, countMessagesTokens, calculateSavings } = require('../src/tokens')
 const { buildCompressionPrompt, factsToPromptBlock, parseStructuredResponse } = require('../src/formatters/structured')
 const { getProvider } = require('../src/providers/index')
+const { tokenFreeCompress } = require('../src/tokenFree')
 
 let passed = 0
 let failed = 0
@@ -28,6 +29,27 @@ function assert(condition, message) {
 
 function assertEqual(a, b, message) {
   if (a !== b) throw new Error(message || `Expected ${b}, got ${a}`)
+}
+
+function expect(actual) {
+  return {
+    toBeGreaterThanOrEqual(n) {
+      if (!(actual >= n)) throw new Error(`Expected ${actual} >= ${n}`)
+    },
+    toBe(v) {
+      if (actual !== v) throw new Error(`Expected ${v}, got ${actual}`)
+    },
+    not: {
+      toBe(v) {
+        if (actual === v) throw new Error(`Expected not to be ${v}`)
+      }
+    },
+    toContain(s) {
+      if (typeof actual !== 'string' || !actual.includes(s)) {
+        throw new Error(`Expected string to contain "${s}"`)
+      }
+    }
+  }
 }
 
 // ─── window.js tests ──────────────────────────────────────────────────────────
@@ -198,6 +220,54 @@ test('throws on unknown provider', () => {
 test('is case insensitive', () => {
   const provider = getProvider('GROQ')
   assert(typeof provider.callProvider === 'function', 'should work with uppercase')
+})
+
+// ─── tokenFree.js tests ───────────────────────────────────────────────────────
+
+console.log('\ntokenFree.js')
+
+test('token-free extracts minimum 5 facts from 20 messages', () => {
+  const messages = [
+    {role:'user', content:'I am building a Node.js CLI tool called ai-router'},
+    {role:'assistant', content:'What does it do?'},
+    {role:'user', content:'Routes AI requests across Groq Gemini and Claude'},
+    {role:'assistant', content:'How do you handle failover?'},
+    {role:'user', content:'We decided to use automatic failover when rate limit hit'},
+    {role:'assistant', content:'What about storage?'},
+    {role:'user', content:'We chose SQLite via node:sqlite no compilation needed'},
+    {role:'assistant', content:'Where does data live?'},
+    {role:'user', content:'All user data lives in ~/.ai-router/ folder'},
+    {role:'assistant', content:'What providers?'},
+    {role:'user', content:'Eight built-in providers including Groq Gemini Claude'},
+    {role:'assistant', content:'How to add providers?'},
+    {role:'user', content:'We completed the provider add command no code changes needed'},
+    {role:'assistant', content:'Token limits?'},
+    {role:'user', content:'Token caps are done user sets ceiling router switches'},
+    {role:'assistant', content:'In progress?'},
+    {role:'user', content:'Currently integrating MemoryDistil for compression'},
+    {role:'assistant', content:'Open issues?'},
+    {role:'user', content:'The python-manager graphify fix is still pending'},
+    {role:'user', content:'Next step is building the Web Bridge Chrome extension'}
+  ]
+
+  const result = tokenFreeCompress(messages)
+
+  const totalFacts = [
+    ...result.summary.decisions,
+    ...result.summary.completed,
+    ...result.summary.inProgress,
+    ...result.summary.openQuestions
+  ].length
+
+  expect(totalFacts).toBeGreaterThanOrEqual(5)
+  expect(result.summary.project).not.toBe('Not identified')
+  expect(result.promptBlock).toContain('CONVERSATION CONTEXT')
+})
+
+test('token-free returns empty summary on empty input', () => {
+  const result = tokenFreeCompress([])
+  assertEqual(result.tokensUsed, 0)
+  assertEqual(result.summary.decisions.length, 0)
 })
 
 // ─── results ──────────────────────────────────────────────────────────────────

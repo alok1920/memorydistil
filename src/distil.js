@@ -106,7 +106,7 @@ async function distil(options = {}) {
 
   // STEP 2b — if Ollama, check if it is running before chunking
   if (isOllama(provider)) {
-    const { isOllamaRunning } = require('../../src/providers/ollama')
+    const { isOllamaRunning } = require('./providers/ollama')
     const running = await isOllamaRunning()
     if (!running) {
       console.error('[memorydistil] Ollama not running — start with: ollama serve — using token-free mode instead')
