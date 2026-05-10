@@ -1,5 +1,7 @@
 'use strict'
 
+const { sharedWordCount } = require('../merge')
+
 const DEFAULT_CATEGORIES = [
   'project',
   'decisions',
@@ -26,6 +28,7 @@ Return a JSON object with these fields:
 Rules:
 - Use plain natural language, not jargon
 - Be specific: "use SQLite via node:sqlite" not "use a database"
+- Only extract facts explicitly stated in the conversation. Do not infer, assume, or add anything not directly said.
 - If nothing fits a category, use an empty array []
 - Output ONLY valid JSON, no markdown, no explanation, no preamble`
 }
@@ -37,6 +40,7 @@ Your job:
 1. Improve the draft - fix vague or incomplete items
 2. Add anything important from the raw messages the draft missed
 3. Remove duplicates
+4. Only extract facts explicitly stated in the conversation. Do not infer, assume, or add anything not directly said.
 
 Return this JSON structure:
 
@@ -98,6 +102,22 @@ function parseStructuredResponse(rawResponse, categories) {
         result[cat] = Array.isArray(parsed[cat]) ? parsed[cat] : []
       }
     }
+
+    // Cross-field dedup — completed wins. If a "decision" or "in progress"
+    // item shares 3+ meaningful words with a completed item, drop it from
+    // its original bucket so each fact is reported once.
+    if (Array.isArray(result.completed) && result.completed.length > 0) {
+      const dropDuplicates = (arr) => arr.filter(item =>
+        !result.completed.some(done => sharedWordCount(item, done) >= 3)
+      )
+      if (Array.isArray(result.decisions)) {
+        result.decisions = dropDuplicates(result.decisions)
+      }
+      if (Array.isArray(result.inProgress)) {
+        result.inProgress = dropDuplicates(result.inProgress)
+      }
+    }
+
     return result
   } catch {
     return {
