@@ -1,6 +1,6 @@
 {
   "name": "memorydistil",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Compress AI conversation history into structured facts optimised for prompt re-injection. Provider-agnostic, zero infrastructure, drop-in replacement for truncation.",
   "main": "src/index.js",
   "bin": {
