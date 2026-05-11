@@ -1,0 +1,8 @@
+.claude/
+test/
+*.md
+!README.md
+.env
+.gitignore
+COMMIT_GUIDE*.md
+TESTING*.md
