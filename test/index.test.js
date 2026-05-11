@@ -291,10 +291,69 @@ test('assistant questions never classified as decisions or completed', () => {
   )
   assert(!decisionsHasAssistant, 'assistant questions must not appear in decisions')
 
+  // Assistant questions are conversational prompts, not unresolved items —
+  // they should not appear in openQuestions either (post v0.2.4 tightening).
   const inOpenQ = result.summary.openQuestions.some(q =>
-    q.toLowerCase().includes('how does failover work')
+    q.toLowerCase().includes('how does failover work') ||
+    q.toLowerCase().includes('does this work correctly')
   )
-  assert(inOpenQ, 'assistant question "How does failover work" should land in openQuestions')
+  assert(!inOpenQ, 'assistant questions should not land in openQuestions, got: ' + JSON.stringify(result.summary.openQuestions))
+})
+
+test('project extraction finds name, not raw message', () => {
+  const messages = [
+    {role:'user', content:'hey good morning!'},
+    {role:'assistant', content:'Good morning! Ready?'},
+    {role:'user', content:'so i built this tool called ai-router that routes AI requests'}
+  ]
+  const result = tokenFreeCompress(messages)
+  assertEqual(result.summary.project, 'ai-router')
+  assert(!result.summary.project.includes('what do you think'),
+    'project should not contain raw message text')
+})
+
+test('project extraction picks up scoped npm package name', () => {
+  const messages = [
+    {role:'user', content:'we published it as @alok1910/ai-router on npm'}
+  ]
+  const result = tokenFreeCompress(messages)
+  assert(result.summary.project.includes('@alok1910/ai-router'),
+    'project should contain scoped npm name, got: ' + result.summary.project)
+})
+
+test('greetings and assistant questions never land in open questions', () => {
+  const messages = [
+    {role:'assistant', content:'ready to talk about ai-router?'},
+    {role:'assistant', content:'what do you think?'},
+    {role:'user', content:'thoughts?'},
+    {role:'user', content:'does that make sense?'}
+  ]
+  const result = tokenFreeCompress(messages)
+  assertEqual(result.summary.openQuestions.length, 0,
+    'no greeting should be in openQuestions, got: ' + JSON.stringify(result.summary.openQuestions))
+})
+
+test('real open questions ARE captured', () => {
+  const messages = [
+    {role:'user', content:'should we use Electron or web UI for the desktop app?'},
+    {role:'user', content:'how should we handle the case when all providers are exhausted?'}
+  ]
+  const result = tokenFreeCompress(messages)
+  assert(result.summary.openQuestions.length >= 1,
+    'expected >= 1 open question, got: ' + JSON.stringify(result.summary.openQuestions))
+})
+
+test('preferences require explicit first-person preference language', () => {
+  const messages = [
+    {role:'user', content:'user never sees the failover'},
+    {role:'user', content:'it switches automatically'},
+    {role:'user', content:'i prefer no inline comments in the code'}
+  ]
+  const result = tokenFreeCompress(messages)
+  const hasInline = result.summary.preferences.some(p => p.toLowerCase().includes('no inline comments'))
+  assert(hasInline, 'preferences should contain "no inline comments", got: ' + JSON.stringify(result.summary.preferences))
+  const hasUserNeverSees = result.summary.preferences.some(p => p.toLowerCase().includes('user never sees'))
+  assert(!hasUserNeverSees, '"user never sees" must NOT be a preference, got: ' + JSON.stringify(result.summary.preferences))
 })
 
 test('paths with internal dots are not split into fragments', () => {

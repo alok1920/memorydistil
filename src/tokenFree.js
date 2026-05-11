@@ -26,21 +26,42 @@ const COMPLETED_KEYWORDS = [
 
 const OPENQUESTION_KEYWORDS = [
   'still pending', 'fix is still', 'pending', 'unresolved',
-  'not sure', "haven't decided", 'tbd', 'open question'
+  'not sure', "haven't decided", 'tbd', 'open question',
+  'still undecided', 'undecided'
 ]
 
-const QUESTION_KEYWORDS = [
-  'how', 'why', 'what', 'should', 'which', 'when', 'where',
-  'can we', 'do we', 'is there', 'is it', 'are there', '?'
+const QUESTION_UNKNOWNS = [
+  'how', 'what', 'why', 'when', 'which', 'where',
+  'should', 'can we', 'is it', 'will it', 'could'
 ]
 
-const PREFERENCE_KEYWORDS = [
-  'prefer', 'always', 'never', 'no inline',
-  'clean', 'simple', 'i like', 'i hate',
-  'make sure', 'important'
+// Preferences must contain explicit first-person preference language —
+// random factual statements with the word "never" or "always" no longer
+// qualify (e.g. "user never sees it" is a fact, not a preference).
+const PREFERENCE_REQUIRED_PATTERNS = [
+  'i prefer', 'i want', 'i like', 'i need',
+  'always respond', 'always use', 'please',
+  'my style', 'my preference', 'keep it',
+  'no inline', 'in english', 'in hindi',
+  'respond in', 'tone should', 'style should',
+  'format should'
+]
+// "never use" only counts when preceded by "i" or "please"
+const PREFERENCE_NEVER_USE_RE = /\b(?:i|please)\s+never use\b/
+
+// Phrases that, even when paired with a question mark, are pleasantries
+// rather than genuine unresolved project questions.
+const GREETING_START_PHRASES = [
+  'ready ', 'shall we', 'what do you think', 'does that',
+  'make sense', 'sound good', 'thoughts?', 'agree?', 'right?',
+  'cool?', 'ok?', 'good morning', 'good evening',
+  'hey ', 'hey,', 'hi ', 'hi,', 'hello'
 ]
 
-// loosened max line length — some real sentences run past 80 chars
+const TRIVIAL_ONE_WORD = new Set([
+  'thoughts', 'agree', 'right', 'cool', 'ok', 'sure', 'yes', 'no', 'maybe'
+])
+
 const MAX_LINE_LEN = 160
 const MIN_LINE_LEN = 6
 
@@ -49,34 +70,105 @@ function containsAny(text, keywords) {
   return keywords.some(kw => lower.includes(kw))
 }
 
-/**
- * Extract the project description by scanning user messages for build/create/etc.
- * Falls back to the first user message.
- */
-function extractProject(messages) {
-  const userMsgs = messages.filter(m => (m.role || 'user') === 'user')
-  for (const msg of userMsgs.slice(0, 8)) {
+function isGreetingLike(text) {
+  const lower = text.trim().toLowerCase()
+  const stripped = lower.replace(/[?.!,]+$/g, '').trim()
+  if (TRIVIAL_ONE_WORD.has(stripped)) return true
+
+  const wordCount = lower.split(/\s+/).filter(Boolean).length
+  if (wordCount < 6) return true
+
+  return GREETING_START_PHRASES.some(p => lower.startsWith(p))
+}
+
+function isRealOpenQuestion(line, role) {
+  if (role !== 'user') return false
+  if (isGreetingLike(line)) return false
+  const lower = line.toLowerCase()
+  if (!QUESTION_UNKNOWNS.some(u => lower.includes(u))) return false
+  return true
+}
+
+function isExplicitUnresolved(line, role) {
+  // OPENQUESTION_KEYWORDS path — captures "X is still pending", "unresolved", etc.
+  // Doesn't require a question mark or question word, but still must come from
+  // the user and clear the basic greeting filter.
+  if (role !== 'user') return false
+  if (isGreetingLike(line)) return false
+  return containsAny(line, OPENQUESTION_KEYWORDS)
+}
+
+function hasPreferenceSignal(line) {
+  const lower = line.toLowerCase()
+  if (PREFERENCE_REQUIRED_PATTERNS.some(p => lower.includes(p))) return true
+  if (PREFERENCE_NEVER_USE_RE.test(lower)) return true
+  return false
+}
+
+// ── Project extraction ─────────────────────────────────────────
+
+// Captures @scope/name (must precede the called/named/building patterns
+// because the @ char isn't otherwise a word boundary).
+const SCOPED_NPM_RE = /(@[\w-]+\/[\w][\w\-./]*)/
+
+// "called X" / "named X" — explicit naming
+const CALLED_RE = /\b(?:called|named)\s+([@\w][\w\-./@]*)/i
+
+// "building X" / "built X" — extracted as a project name
+const BUILDING_RE = /\b(?:i am building|i'm building|building a|building|built|created|built a|created a)\s+([@\w][\w\-./@]*)/i
+
+function cleanIdentifier(s) {
+  return s.replace(/[.,;:!?)\]}'"]+$/, '').trim()
+}
+
+function tryExtractProjectName(messages) {
+  const userMsgs = messages.filter(m => (m.role || 'user') === 'user').slice(0, 8)
+
+  // Priority 1: "called X" / "named X"
+  for (const msg of userMsgs) {
     const content = (msg.content || '').trim()
-    if (content.length > 15 && content.length < 240) {
-      const lower = content.toLowerCase()
-      if (lower.includes('build') || lower.includes('create') || lower.includes('want to') ||
-          lower.includes('making') || lower.includes('project') || lower.includes('app') ||
-          lower.includes('tool') || lower.includes('cli') || lower.includes('system')) {
-        return content.slice(0, 140).replace(/\n/g, ' ').trim()
-      }
+    const m = content.match(CALLED_RE)
+    if (m && m[1] && m[1].length >= 2) return cleanIdentifier(m[1])
+  }
+
+  // Priority 2: "building X" / "built X"
+  for (const msg of userMsgs) {
+    const content = (msg.content || '').trim()
+    const m = content.match(BUILDING_RE)
+    if (m && m[1] && m[1].length >= 2) {
+      const candidate = cleanIdentifier(m[1])
+      // Skip "a"/"an"/"the" — pattern allows them through but they're noise.
+      if (!['a', 'an', 'the'].includes(candidate.toLowerCase())) return candidate
     }
   }
-  const firstUser = userMsgs[0]
-  return firstUser ? firstUser.content.slice(0, 140).replace(/\n/g, ' ').trim() : 'Not identified'
+
+  // Priority 3: scoped npm package — anywhere in the first 8 user messages.
+  for (const msg of userMsgs) {
+    const content = (msg.content || '').trim()
+    const m = content.match(SCOPED_NPM_RE)
+    if (m && m[1]) return cleanIdentifier(m[1])
+  }
+
+  return null
+}
+
+function extractProject(messages) {
+  const named = tryExtractProjectName(messages)
+  if (named) return named
+
+  // Priority 4: fall back to the first sentence of the first user message,
+  // truncated to 60 chars, with question marks stripped.
+  const firstUser = messages.find(m => (m.role || 'user') === 'user')
+  if (!firstUser) return 'Not identified'
+  const firstSentence = (firstUser.content || '').split(/[.\n!?]/)[0].trim()
+  if (firstSentence.length < 6) return 'Not identified'
+  return firstSentence.slice(0, 60).replace(/[?!]/g, '').trim()
 }
 
 /**
- * Zero-token heuristic compression
- * Runs entirely in JavaScript, no API calls
- * Quality is lower than AI compression but always works
- *
- * @param {Array} messages - old messages to compress
- * @returns {{ summary: Object, promptBlock: string, tokensUsed: number }}
+ * Zero-token heuristic compression.
+ * Runs entirely in JavaScript, no API calls. Always works, lower quality
+ * than AI compression.
  */
 function tokenFreeCompress(messages) {
   if (!messages || messages.length === 0) {
@@ -106,9 +198,8 @@ function tokenFreeCompress(messages) {
 
     const role = msg.role || 'user'
 
-    // Path-aware sentence splitter: protect dots that sit inside paths,
-    // filenames, dotfiles, or version numbers (e.g. ~/.ai-router/config.json,
-    // .env, 1.5) so they do not get treated as sentence terminators.
+    // Path-aware splitter: protect dots inside paths/files/dotfiles/versions
+    // (~/.ai-router/config.json, .env, 1.5) before splitting on sentence terminators.
     const protectedContent = content.replace(/\.(?=[a-zA-Z0-9_-])/g, '___DOT___')
     const rawLines = protectedContent
       .split(/[.\n!]+/)
@@ -122,26 +213,21 @@ function tokenFreeCompress(messages) {
       const hasCompleted = containsAny(line, COMPLETED_KEYWORDS)
       const hasDecision = containsAny(line, DECISION_KEYWORDS)
       const hasProgress = containsAny(line, INPROGRESS_KEYWORDS)
-      const hasOpenQ = containsAny(line, OPENQUESTION_KEYWORDS)
       const hasQuestionMark = line.includes('?')
-      const hasQuestionWord = containsAny(line, QUESTION_KEYWORDS)
-      const hasPreference = containsAny(line, PREFERENCE_KEYWORDS)
-
       const trimmed = line.slice(0, 140)
 
-      // Assistant messages can only contribute to openQuestions. They ask
-      // things; they don't decide, complete, or commit to in-progress work.
-      // Without this gate, an assistant question like "How does it work?"
-      // gets misclassified as completed via the "works" keyword.
+      // Assistant messages can only contribute to preferences (rare), never
+      // to decisions/completed/inProgress/openQuestions. Their questions are
+      // conversational prompts, not unresolved project items.
       if (role === 'assistant') {
-        if (hasOpenQ || (hasQuestionMark && hasQuestionWord)) {
-          openQuestions.add(trimmed)
-        }
+        if (hasPreferenceSignal(line)) preferences.add(trimmed)
         continue
       }
 
-      // User messages — full classification, most-specific first.
-      if (hasOpenQ) {
+      // User messages — most-specific first.
+
+      // 1. Explicit-unresolved phrasing ("X is still pending", "unresolved", tbd)
+      if (isExplicitUnresolved(line, role)) {
         openQuestions.add(trimmed)
         continue
       }
@@ -161,12 +247,14 @@ function tokenFreeCompress(messages) {
         continue
       }
 
-      if (hasQuestionMark && hasQuestionWord) {
+      // 2. Genuine question — passes greeting filter + has an unknown word.
+      if (hasQuestionMark && isRealOpenQuestion(line, role)) {
         openQuestions.add(trimmed)
         continue
       }
 
-      if (hasPreference) {
+      // 3. Preferences require explicit first-person preference language.
+      if (hasPreferenceSignal(line)) {
         preferences.add(trimmed)
       }
     }
